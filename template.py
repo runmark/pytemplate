@@ -24,7 +24,18 @@ class TemplateTest(unittest.TestCase):
             self.render("{{name}}", {}, "")
 
     def test_parse_repr(self):
-        pass
+        cases = [
+            ("name", "name", []),
+            ("name | upper", "name", ["upper"]),
+            ("name | upper | strip", "name", ["upper", "strip"]),
+            ("'a string with | inside' | upper | strip",
+             "'a string with | inside'", ["upper", "strip"])
+        ]
+
+        for expr, varname, filters in cases:
+            parsed_varname, parsed_filters = parse_expr(expr)
+            self.assertEqual(varname, parsed_varname)
+            self.assertEqual(filters, parsed_filters)
 
 
 class TokenizeTest(unittest.TestCase):
@@ -127,6 +138,27 @@ def create_tokens(text: str) -> Token:
         token, content = Text(), text
     token.parse(content)
     return token
+
+
+def extract_last_filter(text: str) -> typing.Tuple[str, str]:
+    m = re.search(r'(\|\s*[A-Za-z0-9_]+\s*)$', text)
+    if m:
+        suffix = m.group(1)
+        filter_ = suffix[1:].strip()
+        var_name = text[:-len(suffix)].strip()
+        return var_name, filter_
+    return text, None
+
+
+def parse_expr(text: str) -> typing.Tuple[str, typing.List[str]]:
+    var_name, filters = text, []
+    while True:
+        var_name, filter_ = extract_last_filter(var_name)
+        if filter_:
+            filters.insert(0, filter_)
+        else:
+            break
+    return var_name, filters
 
 
 if __name__ == '__main__':
