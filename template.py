@@ -4,8 +4,11 @@ import typing
 
 
 class TemplateTest(unittest.TestCase):
-    def render(self, text: str, ctx: dict, expected: str):
-        rendered = Template(text).render(ctx)
+    def render(self, text: str, ctx: dict, expected: str, filters: dict = None):
+        engine = TemplateEngine()
+        engine.register("upper", lambda x: x.upper())
+        engine.register("strip", lambda x: x.strip())
+        rendered = engine.create(text).render(ctx)
         self.assertEqual(expected, rendered)
 
     def test_plain_text(self):
@@ -19,23 +22,31 @@ class TemplateTest(unittest.TestCase):
     def test_expr_single(self):
         self.render('hello, {{name}}!', {"name": "Bob"}, "hello, Bob!")
 
+    def test_expr_array_index(self):
+        self.render('hello, {{names[0]}}', {
+                    "names": ["guest"]}, 'hello, guest')
+
+    def test_expr_array_name(self):
+        self.render("Hello, {{names['guest']}}!",
+                    {"names": {"guest": 123}},
+                    "Hello, 123!")
+
+    def test_expr_multi(self):
+        self.render("Hello, {{user}} at {{year}}!",
+                    {"user": "Alice", "year": 2020},
+                    "Hello, Alice at 2020!")
+
     def test_expr_variable_missing(self):
         with self.assertRaises(NameError):
             self.render("{{name}}", {}, "")
 
-    def test_parse_repr(self):
-        cases = [
-            ("name", "name", []),
-            ("name | upper", "name", ["upper"]),
-            ("name | upper | strip", "name", ["upper", "strip"]),
-            ("'a string with | inside' | upper | strip",
-             "'a string with | inside'", ["upper", "strip"])
-        ]
+    def test_expr_with_filter_1(self):
+        self.render("Hello, {{ name | upper }}!", {
+                    "name": "Bob"}, "Hello, BOB!")
 
-        for expr, varname, filters in cases:
-            parsed_varname, parsed_filters = parse_expr(expr)
-            self.assertEqual(varname, parsed_varname)
-            self.assertEqual(filters, parsed_filters)
+    def test_expr_with_filter_2(self):
+        self.render("Hello, {{ name | upper | strip }}!",
+                    {"name": "   Bob   "}, "Hello, BOB!")
 
 
 class TokenizeTest(unittest.TestCase):
@@ -54,14 +65,31 @@ class TokenizeTest(unittest.TestCase):
             Expr("year")
         ])
 
+    def test_parse_repr(self):
+        cases = [
+            ("name", "name", []),
+            ("name | upper", "name", ["upper"]),
+            ("name | upper | strip", "name", ["upper", "strip"]),
+            ("'a string with | inside' | upper | strip",
+             "'a string with | inside'", ["upper", "strip"])
+        ]
+
+        for expr, varname, filters in cases:
+            parsed_varname, parsed_filters = parse_expr(expr)
+            self.assertEqual(varname, parsed_varname)
+            self.assertEqual(filters, parsed_filters)
+
 
 OUTPUT_VAR = "_output_"
 
 
 class Template:
-    def __init__(self, text: str):
+    def __init__(self, text: str, filters: dict = None):  # type: ignore
         self._text = text
         self._code = None
+        self._global_vars = {}
+        if filters:
+            self._global_vars.update(filters)
 
     def _generate_code(self):
         if not self._code:
@@ -69,14 +97,27 @@ class Template:
             code_lines = [x.generate_code() for x in tokens]
             source_code = '\n'.join(code_lines)
             self._code = compile(source_code, '', 'exec')
+            # self._source_code = source_code
 
     def render(self, ctx: dict) -> str:
         self._generate_code()
         exec_ctx = (ctx or {}).copy()
         output = []
         exec_ctx[OUTPUT_VAR] = output
-        exec(self._code, None, exec_ctx)  # type: ignore
+        exec(self._code, self._global_vars, exec_ctx)  # type: ignore
         return "".join(output)
+
+
+class TemplateEngine:
+
+    def __init__(self):
+        self._filters = {}
+
+    def register(self, name: str, filter_):
+        self._filters[name] = filter_
+
+    def create(self, source: str) -> Template:
+        return Template(source, filters=self._filters)
 
 
 """
@@ -102,28 +143,35 @@ class Text(Token):
     def __init__(self, content: str = ""):
         self._content = content
 
-    def parse(self, content: str):
-        self._content = content
-
     def __repr__(self):
         return f"Text({self._content})"
+
+    def parse(self, content: str):
+        self._content = content
 
     def generate_code(self) -> str:
         return f"{OUTPUT_VAR}.append({repr(self._content)})"
 
 
 class Expr(Token):
-    def __init__(self, content: str = ""):
-        self._varname = content
-
-    def parse(self, content: str):
-        self._varname = content
+    # TODO
+    def __init__(self, varname: str = ""):
+        self._varname = varname
+        self._filters = []
 
     def __repr__(self):
+        if self._filters:
+            return f"Expr({self._varname} | {' | '.join(self._filters)})"
         return f"Expr({self._varname})"
 
+    def parse(self, content: str):
+        self._varname, self._filters = parse_expr(content)
+
     def generate_code(self) -> str:
-        return f"{OUTPUT_VAR}.append(str({self._varname}))"
+        result = self._varname
+        for filter in self._filters[::-1]:
+            result = f"{filter}({result})"
+        return f"{OUTPUT_VAR}.append(str({result}))"
 
 
 def tokenize(text: str) -> typing.List[Token]:
@@ -141,13 +189,17 @@ def create_tokens(text: str) -> Token:
 
 
 def extract_last_filter(text: str) -> typing.Tuple[str, str]:
+    """
+    Extract last filter from expression like 'var | ... | filter'.
+    return (text, None) when no more filters found.
+    """
     m = re.search(r'(\|\s*[A-Za-z0-9_]+\s*)$', text)
     if m:
         suffix = m.group(1)
         filter_ = suffix[1:].strip()
         var_name = text[:-len(suffix)].strip()
         return var_name, filter_
-    return text, None
+    return text, ""
 
 
 def parse_expr(text: str) -> typing.Tuple[str, typing.List[str]]:
