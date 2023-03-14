@@ -4,8 +4,11 @@ import typing
 
 
 class TemplateTest(unittest.TestCase):
-    def render(self, text: str, ctx: dict, expected: str, filters: dict = None):
+    def render(self, text: str, ctx: dict, expected: str, filters: dict = None):  # type: ignore
         engine = TemplateEngine()
+        if filters:
+            for name, fn in filters.items():
+                engine.register(name, fn)
         engine.register("upper", lambda x: x.upper())
         engine.register("strip", lambda x: x.strip())
         rendered = engine.create(text).render(ctx)
@@ -48,6 +51,29 @@ class TemplateTest(unittest.TestCase):
         self.render("Hello, {{ name | upper | strip }}!",
                     {"name": "   Bob   "}, "Hello, BOB!")
 
+    def test_expr_with_addition_filter(self):
+        def first(x): return x[0]
+        self.render("Hello, {{ name | upper | first }}!",
+                    {"name": "alice"},
+                    "Hello, A!",
+                    filters={"first": lambda x: x[0]})
+
+    def test_filter_not_defined(self):
+        with self.assertRaises(NameError):
+            self.render("Hello, {{ name | upper | first }}!",
+                        {"name": "alice"},
+                        "Hello, A!")
+
+    def test_comment(self):
+        self.render("Hello, {# This is a comment. #}World!",
+                    {},
+                    "Hello, World!")
+
+    def test_comment_with_expr(self):
+        self.render("Hello, {# This is a comment. #}{{name}}!",
+                    {"name": "Alice"},
+                    "Hello, Alice!")
+
 
 class TokenizeTest(unittest.TestCase):
     def test_single_variable(self):
@@ -78,6 +104,14 @@ class TokenizeTest(unittest.TestCase):
             parsed_varname, parsed_filters = parse_expr(expr)
             self.assertEqual(varname, parsed_varname)
             self.assertEqual(filters, parsed_filters)
+
+    def test_comment(self):
+        tokens = tokenize("Prefix {# Comment #} Suffix")
+        self.assertEqual(tokens, [
+            Text("Prefix "),
+            Comment("Comment"),
+            Text(" Suffix"),
+        ])
 
 
 OUTPUT_VAR = "_output_"
@@ -174,14 +208,31 @@ class Expr(Token):
         return f"{OUTPUT_VAR}.append(str({result}))"
 
 
+class Comment(Token):
+
+    def __init__(self, content: str = ""):
+        self._content = content
+
+    def __repr__(self):
+        return f"Comment({self._content})"
+
+    def parse(self, content: str):
+        self._content = content
+
+    def generate_code(self) -> str:
+        return ""
+
+
 def tokenize(text: str) -> typing.List[Token]:
-    segments = re.split(r"({{.*?}})", text)
+    segments = re.split(r"({{.*?}}|{#.*?#})", text)
     return [create_tokens(s) for s in segments if s.strip()]
 
 
 def create_tokens(text: str) -> Token:
     if text.startswith("{{") and text.endswith("}}"):
         token, content = Expr(), text[2:-2].strip()
+    elif text.startswith("{#") and text.endswith("#}"):
+        token, content = Comment(), text[2:-2].strip()
     else:
         token, content = Text(), text
     token.parse(content)
