@@ -75,6 +75,26 @@ class TemplateTest(unittest.TestCase):
                     "Hello, Alice!")
 
 
+"""
+hello, 
+{% if switch %}
+    {% open_msg %}
+{% else %}
+    {% close_msg %}
+{% endif %}
+!
+"""
+
+
+"""
+{% if switch %}
+    {% open_msg %}
+{% else %}
+    {% close_msg %}
+{% endif %}
+"""
+
+
 class TokenizeTest(unittest.TestCase):
     def test_single_variable(self):
         tokens = tokenize('Hello, {{name}}!')
@@ -113,6 +133,15 @@ class TokenizeTest(unittest.TestCase):
             Text(" Suffix"),
         ])
 
+    def test_tokenize_for_loop(self):
+        tokens = tokenize("{% for row in rows %}Loop {{ row }}{% endfor %}")
+        self.assertEqual(tokens, [
+            For("row", "rows"),
+            Text("Loop "),
+            Expr("row"),
+            EndFor()
+        ])
+
 
 OUTPUT_VAR = "_output_"
 
@@ -143,7 +172,6 @@ class Template:
 
 
 class TemplateEngine:
-
     def __init__(self):
         self._filters = {}
 
@@ -223,16 +251,46 @@ class Comment(Token):
         return ""
 
 
+class For(Token):
+    pass
+
+
+class EndFor(Token):
+    pass
+
+
 def tokenize(text: str) -> typing.List[Token]:
-    segments = re.split(r"({{.*?}}|{#.*?#})", text)
-    return [create_tokens(s) for s in segments if s.strip()]
+    segments = re.split(r"({{.*?}}|{#.*?#}|{%.*?%})", text)
+    return [create_token(s) for s in segments if s.strip()]
 
 
-def create_tokens(text: str) -> Token:
+def create_control_token(content: str) -> Token:
+    content = content.strip()
+    m = re.match(r"^(\w+)", content)
+    if not m:
+        raise SyntaxError(f'Unknown control token: {content}')
+
+    keyword = m.group(1)
+    token_types = {
+        'for': For,
+        'endfor': EndFor,
+    }
+
+    if keyword not in token_types:
+        raise SyntaxError(f'Unknown control token: {content}')
+
+    return token_types[keyword]()
+
+
+def create_token(text: str) -> Token:
+    """ Create and parse token from text. """
     if text.startswith("{{") and text.endswith("}}"):
         token, content = Expr(), text[2:-2].strip()
     elif text.startswith("{#") and text.endswith("#}"):
         token, content = Comment(), text[2:-2].strip()
+    elif text.startswith("{%") and text.endswith("%}"):
+        content = text[2:-2].strip()
+        token = create_control_token(content)
     else:
         token, content = Text(), text
     token.parse(content)
