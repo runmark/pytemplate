@@ -1,37 +1,90 @@
-from ast import Expr
 import unittest
 
+from template import Template, TemplateEngine, tokenize, parse_expr, Text, Expr, Comment, For, EndFor
 
-from template import EndFor, For, TemplateEngine, Text, parse_expr, tokenize, Comment
+
+class TokenizeTest(unittest.TestCase):
+    def test_single_variable(self):
+        tokens = tokenize("Hello, {{name}}!")
+        self.assertEqual(tokens, [
+            Text("Hello, "),
+            Expr("name"),
+            Text("!")
+        ])
+
+    def test_two_variables(self):
+        tokens = tokenize("Hello, {{name}} in {{year}}")
+        self.assertEqual(tokens, [
+            Text("Hello, "),
+            Expr("name"),
+            Text(" in "),
+            Expr("year")
+        ])
+
+    def test_comment(self):
+        tokens = tokenize("Prefix {# Comment #} Suffix")
+        self.assertEqual(tokens, [
+            Text("Prefix "),
+            Comment("Comment"),
+            Text(" Suffix"),
+        ])
+
+    def test_parse_repr(self):
+        cases = [
+            ("name", "name", []),
+            ("name | upper", "name", ["upper"]),
+            ("name | upper | strip", "name", ["upper", "strip"]),
+            ("'a string with | inside' | upper | strip",
+             "'a string with | inside'", ["upper", "strip"])
+        ]
+        for expr, varname, filters in cases:
+            parsed_varname, parsed_filters = parse_expr(expr)
+            self.assertEqual(varname, parsed_varname)
+            self.assertEqual(filters, parsed_filters)
+
+    def test_tokenize_for_loop(self):
+        tokens = tokenize("{% for row in rows %}Loop {{ row }}{% endfor %}")
+        self.assertEqual(tokens, [
+            For("row", "rows"),
+            Text("Loop "),
+            Expr("row"),
+            EndFor(),
+        ])
+
+    def test_tokenize_invalid_control(self):
+        with self.assertRaises(SyntaxError):
+            tokenize("{% nokeyword %}")
 
 
 class TemplateTest(unittest.TestCase):
     def render(self, text: str, ctx: dict, expected: str, filters: dict = None):  # type: ignore
         engine = TemplateEngine()
         if filters:
-            for name, fn in filters.items():
-                engine.register(name, fn)
-        engine.register("upper", lambda x: x.upper())
-        engine.register("strip", lambda x: x.strip())
-        rendered = engine.create(text).render(ctx)
+            for filter_name, fn in filters.items():
+                engine.register_filter(filter_name, fn)
+        template = engine.create(text)
+        rendered = template.render(ctx)
         self.assertEqual(expected, rendered)
 
     def test_plain_text(self):
         for text in [
-                'This is a simple message.',
-                '<h1>This is a html message.</h1>',
-                'This is a multi message\nThis is line 2 of the message'
+            'This is a simple message.',
+            '<h1>This is a html message.</h1>',
+            'This is a multi line message\nThis is line 2 of the message',
         ]:
-            self.render(text, {}, text)
+            self.render(text, None, text)  # type: ignore
 
     def test_expr_single(self):
-        self.render('hello, {{name}}!', {"name": "Bob"}, "hello, Bob!")
+        self.render("Hello, {{name}}!",
+                    {"name": "Alice"},
+                    "Hello, Alice!")
 
-    def test_expr_array_index(self):
-        self.render('hello, {{names[0]}}', {
-                    "names": ["guest"]}, 'hello, guest')
+    def test_expr_array(self):  # type: ignore
+        self.render("Hello, {{names[0]}}!",
+                    {"names": ["guest"]},
+                    "Hello, guest!")
 
-    def test_expr_array_name(self):
+    def test_expr_array(self):
         self.render("Hello, {{names['guest']}}!",
                     {"names": {"guest": 123}},
                     "Hello, 123!")
@@ -46,19 +99,21 @@ class TemplateTest(unittest.TestCase):
             self.render("{{name}}", {}, "")
 
     def test_expr_with_filter_1(self):
-        self.render("Hello, {{ name | upper }}!", {
-                    "name": "Bob"}, "Hello, BOB!")
+        self.render("Hello, {{ name | upper }}!",
+                    {"name": "Alice"},
+                    "Hello, ALICE!")
 
     def test_expr_with_filter_2(self):
         self.render("Hello, {{ name | upper | strip }}!",
-                    {"name": "   Bob   "}, "Hello, BOB!")
+                    {"name": "  Alice  "},
+                    "Hello, ALICE!")
 
     def test_expr_with_addition_filter(self):
         def first(x): return x[0]
         self.render("Hello, {{ name | upper | first }}!",
-                    {"name": "alice"},
+                    {"name": "Alice"},
                     "Hello, A!",
-                    filters={"first": lambda x: x[0]})
+                    filters={"first": first})
 
     def test_filter_not_defined(self):
         with self.assertRaises(NameError):
@@ -76,70 +131,28 @@ class TemplateTest(unittest.TestCase):
                     {"name": "Alice"},
                     "Hello, Alice!")
 
+    def test_render_for_loop(self):
+        self.render("{% for msg in messages %}Item {{msg}}!{% endfor %}",
+                    {"messages": ["a", "b", "c"]},
+                    "Item a!Item b!Item c!")
 
-"""
-hello, 
-{% if switch %}
-    {% open_msg %}
-{% else %}
-    {% close_msg %}
-{% endif %}
-!
-"""
+    def test_render_for_loop_with_index(self):
+        self.render("{% for msg in messages %}{{loop.index1}}.{{msg}}!{% endfor %}",
+                    {"messages": ["a", "b", "c"]},
+                    "1.a!2.b!3.c!")
+
+    def test_render_for_loop_no_start_tag(self):
+        with self.assertRaises(SyntaxError):
+            self.render("{% endfor %}",
+                        {"messages": ["a", "b", "c"]},
+                        "")
+
+    def test_render_for_loop_no_end_tag(self):
+        with self.assertRaises(SyntaxError):
+            self.render("{% for msg in messages %}{{msg}}",
+                        {"messages": ["a", "b", "c"]},
+                        "")
 
 
-"""
-{% if switch %}
-    {% open_msg %}
-{% else %}
-    {% close_msg %}
-{% endif %}
-"""
-
-
-class TokenizeTest(unittest.TestCase):
-    def test_single_variable(self):
-        tokens = tokenize('Hello, {{name}}!')
-        self.assertEqual(tokens, [
-            Text('Hello, '), Expr('name'), Text('!')
-        ])
-
-    def test_two_variables(self):
-        tokens = tokenize("Hello, {{name}} in {{year}}   ")
-        self.assertEqual(tokens, [
-            Text("Hello, "),
-            Expr("name"),
-            Text(" in "),
-            Expr("year")
-        ])
-
-    def test_parse_repr(self):
-        cases = [
-            ("name", "name", []),
-            ("name | upper", "name", ["upper"]),
-            ("name | upper | strip", "name", ["upper", "strip"]),
-            ("'a string with | inside' | upper | strip",
-             "'a string with | inside'", ["upper", "strip"])
-        ]
-
-        for expr, varname, filters in cases:
-            parsed_varname, parsed_filters = parse_expr(expr)
-            self.assertEqual(varname, parsed_varname)
-            self.assertEqual(filters, parsed_filters)
-
-    def test_comment(self):
-        tokens = tokenize("Prefix {# Comment #} Suffix")
-        self.assertEqual(tokens, [
-            Text("Prefix "),
-            Comment("Comment"),
-            Text(" Suffix"),
-        ])
-
-    def test_tokenize_for_loop(self):
-        tokens = tokenize("{% for row in rows %}Loop {{ row }}{% endfor %}")
-        self.assertEqual(tokens, [
-            For("row", "rows"),
-            Text("Loop "),
-            Expr("row"),
-            EndFor()
-        ])
+if __name__ == '__main__':
+    unittest.main(__name__)
