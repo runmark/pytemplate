@@ -235,6 +235,71 @@ class EndFor(Token):
         return "repr"
 
 
+class If(Token):
+    name = "if"
+
+    def __init__(self, flag: str = ""):
+        self._flag = flag
+
+    def __repr__(self):
+        return f"If({self._flag})"
+
+    def parse(self, content: str):
+        m = re.match(r'if\s+(\w+)', content.strip())
+        if not m:
+            raise SyntaxError(f"Invalid for if block: {content}")
+        self._flag = m.group(1)
+
+    def generate_code(self, builder: CodeBuilder):
+        builder.add_control_code(f"if {self._flag}:")
+        builder.indent()
+        builder.push_control(self)
+
+
+class Elif(Token):
+    def __init__(self, flag: str = ""):
+        self._flag = flag
+
+    def __repr__(self):
+        return f"ElseIf({self._flag})"
+
+    def parse(self, content: str):
+        m = re.match(r'elif\s+(\w+)', content)
+        if not m:
+            raise SyntaxError(f"Invalid for if block: {content}")
+        self._flag = m.group(1)
+
+    def generate_code(self, builder: CodeBuilder):
+        builder.unindent()
+        builder.add_control_code(f"elif {self._flag}:")
+        builder.indent()
+
+
+class Else(Token):
+    def __repr__(self) -> str:
+        return "Else()"
+
+    def generate_code(self, builder: CodeBuilder):
+        builder.unindent()
+        builder.add_control_code(f"else:")
+        builder.indent()
+
+    def parse(self, content: str):
+        pass
+
+
+class EndIf(Token):
+    def __repr__(self) -> str:
+        return "EndIf()"
+
+    def generate_code(self, builder: CodeBuilder):
+        builder.unindent()
+        builder.end_block(If)
+
+    def parse(self, content: str):
+        pass
+
+
 def tokenize(text: str) -> typing.List[Token]:
     segments = re.split(r"({{.*?}}|{#.*?#}|{%.*?%})", text)
     return [create_token(s) for s in segments if s.strip()]
@@ -265,6 +330,10 @@ def create_control_token(content: str) -> Token:
     token_types = {
         'for': For,
         'endfor': EndFor,
+        'if': If,
+        "elif": Elif,
+        'else': Else,
+        "endif": EndIf,
     }
 
     if keyword not in token_types:

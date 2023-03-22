@@ -1,6 +1,6 @@
 import unittest
 
-from template import Template, TemplateEngine, tokenize, parse_expr, Text, Expr, Comment, For, EndFor
+from template import Template, TemplateEngine, tokenize, parse_expr, Text, Expr, Comment, For, EndFor, Else, Elif, If, EndIf
 
 
 class TokenizeTest(unittest.TestCase):
@@ -54,6 +54,27 @@ class TokenizeTest(unittest.TestCase):
     def test_tokenize_invalid_control(self):
         with self.assertRaises(SyntaxError):
             tokenize("{% nokeyword %}")
+
+    def test_tokenize_if(self):
+        tokens = tokenize("{% if flag %}OK{% endif %}")
+        self.assertEqual(tokens, [
+            If("flag"),
+            Text("OK"),
+            EndIf(),
+        ])
+
+    def test_tokenize_if_else(self):
+        tokens = tokenize(
+            "{% if flag1 %}flag1{% elif flag2 %}flag2{% else %}none{% endif %}")
+        self.assertEqual(tokens, [
+            If("flag1"),
+            Text("flag1"),
+            Elif("flag2"),
+            Text("flag2"),
+            Else(),
+            Text("none"),
+            EndIf(),
+        ])
 
 
 class TemplateTest(unittest.TestCase):
@@ -153,6 +174,17 @@ class TemplateTest(unittest.TestCase):
             self.render("{% for msg in messages %}{{msg}}",
                         {"messages": ["a", "b", "c"]},
                         "")
+
+    def test_render_if_simple(self):
+        source = "{%if flag%}OK{%endif%}"
+        self.render(source, {"flag": True}, "OK")
+        self.render(source, {"flag": False}, "")
+
+    def test_render_if_else(self):
+        source = "{% if flag1 %}flag1{% elif flag2 %}flag2{% else %}none{% endif %}"
+        self.render(source, {"flag1": True, "flag2": False}, "flag1")
+        self.render(source, {"flag1": False, "flag2": True}, "flag2")
+        self.render(source, {"flag1": False, "flag2": False}, "none")
 
 
 if __name__ == '__main__':
