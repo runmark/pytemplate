@@ -59,6 +59,7 @@ class TokenizeTest(unittest.TestCase):
 class TemplateTest(unittest.TestCase):
     def render(self, text: str, ctx: dict, expected: str, filters: dict = None):  # type: ignore
         engine = TemplateEngine()
+        engine.register_default_filters()
         if filters:
             for filter_name, fn in filters.items():
                 engine.register_filter(filter_name, fn)

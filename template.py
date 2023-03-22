@@ -31,7 +31,8 @@ class CodeBuilder:
         self.codes.append(code_line)
 
     def add_expr(self, expr: str):
-        code_line = f'{OUTPUT_VAR}.append({str({expr})})'
+        code_line = f'{OUTPUT_VAR}.append(str({expr}))'
+        # code_line = f'{OUTPUT_VAR}.append({str({expr})})'
         self.codes.append(code_line)
 
     def add_text(self, text: str):
@@ -79,7 +80,8 @@ class CodeBuilder:
 class Template:
     def __init__(self, text: str, filters: Optional[dict] = None):
         self._text = text
-        self._code = None
+        self._source = None  # source code
+        self._code = None    # copiled code
         self._global_vars = {}
         if filters:
             self._global_vars.update(filters)
@@ -91,7 +93,8 @@ class Template:
             for token in tokens:
                 token.generate_code(builder)
             builder.check_code()
-            self._code = compile(builder.source(), '', 'exec')
+            self._source = builder.source()
+            self._code = compile(self._source, '', 'exec')
             # self._source_code = source_code
 
     def render(self, ctx: dict) -> str:
@@ -227,6 +230,9 @@ class EndFor(Token):
     def generate_code(self, builder: CodeBuilder):
         builder.unindent()
         builder.end_block(For)
+
+    def __repr__(self):
+        return "repr"
 
 
 def tokenize(text: str) -> typing.List[Token]:
